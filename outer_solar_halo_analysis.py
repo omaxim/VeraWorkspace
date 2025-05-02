@@ -44,3 +44,7 @@ def main():
 if __name__ == "__main__":
     main()
 
+#python outer_solar_halo_analysis.py --base_path ../../../../virgotng/universe/IllustrisTNG/TNG100-2/output --snapnum 99 --dr 1 --r_min 10 --threshold 2 --output_dir TNG100-2
+
+
+#base_path = "../../../../virgotng/universe/IllustrisTNG/TNG100-2/output"
