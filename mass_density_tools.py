@@ -2,6 +2,7 @@ import numpy as np
 import illustris_python as il
 import scipy.spatial as sc
 from scipy.stats import linregress
+from tng_histogram import spherical_histogram
 import matplotlib.pyplot as plt
 from cosmo_units import conversions
 
@@ -34,61 +35,90 @@ def get_mass_density_stellar_halo_inputs(basePath, SnapNum, PartNum):
     return star_positions, star_masses, tree, halo_positions, halo_radii, halo_masses
 
 
-def compute_mass_density_histogram(star_positions, star_masses, tree, r_min_log, r_max_log, dr, center):
+def compute_mass_density_histogram(
+    star_positions, star_masses, tree, center,
+    r_min, r_max, dr, factor_threshold,
+    **kwargs
+):
     """
-    Computes log10 mass density in radial bins from a center, considering periodic boundary conditions.
-    
-    Parameters:
-        star_positions (Nx3): Star positions.
-        star_masses (N,): Star masses.
-        r_min_log, r_max_log (float): Log10 bounds of radius.
-        dr (float): Bin width in log10 space.
-        center (3,): Center of the spherical bins.
-        box_size (float): Size of the periodic box (assumed cubic).
+    Computes mass density in radial shells using log bins and fits a slope in log-log space.
+    Utilizes `spherical_histogram` for flexible histogramming.
+
+    Parameters
+    ----------
+    star_positions : (N, 3) array
+        3D positions of stars.
+    star_masses : (N,) array
+        Masses of stars.
+    center : (3,) array
+        Center position for the radial histogram.
+    r_min_log, r_max_log : float
+        Log10 of min and max radius for binning.
+    dr : float
+        Log10 bin width.
+    **kwargs :
+        Additional keyword arguments passed to `spherical_histogram`.
+
+    Returns
+    -------
+    result : dict
+        Dictionary with keys:
+          - 'log_r': bin center radii in log10
+          - 'log_density': log10 of mass density
+          - 'slope': slope of log-log fit
+          - 'intercept': intercept of log-log fit
+          - 'total_mass': total stellar mass considered
+          - All other keys from `spherical_histogram`
     """
-    r_min = 10**r_min_log  # Convert from log10 to linear space
-    r_max = 10**r_max_log
+
+    nbins = int(np.ceil((r_max - r_min) / dr))
+
+    shifted_positions = star_positions - center
     within_rmax = tree.query_ball_point(center, r_max)
     within_rmin = tree.query_ball_point(center, r_min)
     indices = np.setdiff1d(within_rmax,within_rmin,assume_unique=True)
-    if indices.size==0:
-        return np.nan, np.nan, np.nan, np.nan, np.nan
+
+    result = spherical_histogram(
+        coords=shifted_positions[indices],
+        weights=star_masses[indices],
+        rmin=r_min,
+        rmax=r_max,
+        nbins=nbins,
+        density=True,
+        **kwargs
+    )
+    weight_density = result.get("weight_density")
+    log_r = np.log10(result["median_r"])
+    with np.errstate(divide='ignore', invalid='ignore'):
+        log_density = np.log10(weight_density)
+    
+    valid = np.isfinite(log_density)
+    if np.count_nonzero(valid) >= 2:
+        slope, intercept, *_ = linregress(log_r[valid], log_density[valid])
     else:
-        star_positions_subset = star_positions[indices]
-        star_masses_subset = star_masses[indices]
-        total_star_mass = star_masses_subset.sum()
-        # Apply minimum-image convention to get displacement vectors
-        dx = star_positions_subset - center
-        distances = np.linalg.norm(dx, axis=1)
+        slope, intercept = np.nan, np.nan
 
-        # Bin setup
-        log_r_bins = np.arange(r_min_log, r_max_log + dr, dr)
-        r_bins = 10**log_r_bins
-        bin_indices = np.digitize(distances, r_bins) - 1
-        num_bins = len(r_bins) - 1
-        mass_in_bin = np.zeros(num_bins)
+    residuals = log_density - (slope * log_r + intercept)
+    # Threshold for identifying satellite bumps
+    residual_threshold = np.log10(factor_threshold)
+    satellite_mask = residuals < residual_threshold
+
+    # Ensure enough data for final fit
+    if np.sum(satellite_mask) >= 2:
+        slope, intercept, _, _, _ = linregress(log_r[satellite_mask], log_density[satellite_mask])
+    else:
+        print("Warning: Not enough points after masking, using initial fit.")
 
 
-        # Mass per shell
-        for i in range(num_bins):
-            in_bin = bin_indices == i
-            mass_in_bin[i] = np.sum(star_masses_subset[in_bin])
 
-        # Volumes and densities
-        volumes = (4/3) * np.pi * (r_bins[1:]**3 - r_bins[:-1]**3)
-        mass_density = mass_in_bin / volumes
-
-        log_mass_densities = np.log10(mass_density)
-        bin_centers = (log_r_bins[:-1] + log_r_bins[1:]) / 2
-
-        # Linear fit
-        valid = log_mass_densities > 0
-        if np.any(valid):
-            slope, intercept, *_ = linregress(bin_centers[valid], log_mass_densities[valid])
-        else:
-            slope, intercept = np.nan, np.nan
-
-        return log_mass_densities[valid], bin_centers[valid], slope, intercept, total_star_mass
+    return {
+        'log_r': log_r,
+        'log_density': log_density,
+        'slope': slope,
+        'intercept': intercept,
+        'satellite_mask': satellite_mask,
+        **result
+    }
 
 def plot_mass_density_slope_histogram(star_positions, star_masses, tree, r_min_log, r_max_log, dr, center):
     """
