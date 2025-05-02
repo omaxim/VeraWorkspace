@@ -15,7 +15,7 @@ def main():
     args = parser.parse_args()
 
     # Create output directory if it doesn't exist
-    output_dir = os.path.join(args.sim_name)
+    output_dir = os.path.join("outputs", args.sim_name)
     os.makedirs(output_dir, exist_ok=True)
 
     # Load data
