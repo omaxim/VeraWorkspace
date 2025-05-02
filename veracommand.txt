@@ -1,0 +1,7 @@
+python outer_solar_halo_analysis.py \
+  --base_path /virgotng/universe/IllustrisTNG/TNG100-3/output \
+  --sim_name TNG100-3 \
+  --snapnum 99 \
+  --dr 1 \
+  --r_min 10 \
+  --threshold 2
